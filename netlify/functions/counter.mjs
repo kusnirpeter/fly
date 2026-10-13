@@ -1,6 +1,142 @@
+
 import { getStore } from '@netlify/blobs';
-const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
-const store=()=>getStore({name:'fly-championship',consistency:'strong'});
-async function read(){const s=store();const keys=[];let cursor;do{const page=await s.list({prefix:'hit/',paginate:true,cursor});keys.push(...page.blobs.map(b=>b.key));cursor=page.cursor;}while(cursor);const hits=(await Promise.all(keys.map(async key=>await s.get(key,{type:'json'}).catch(()=>null)))).filter(Boolean);const names=await Promise.all([0,1].map(async i=>(await s.get(`name/${i}`,{type:'text'}))||`Hráč ${i+1}`));const scores=[0,0];for(const h of hits){if(h.player===0||h.player===1)scores[h.player]+=h.delta;}const events=hits.sort((a,b)=>b.at.localeCompare(a.at)).slice(0,20).map(h=>({...h,name:names[h.player]}));return {names,scores,events};}
-export default async (request)=>{try{if(request.method==='GET')return json(await read());if(request.method!=='POST')return json({error:'Nepodporovaná metóda'},405);let body;try{body=await request.json()}catch{return json({error:'Neplatné JSON'},400)}const s=store();if(body.type==='name'){if(![0,1].includes(body.player)||typeof body.name!=='string'||!body.name.trim()||body.name.length>32)return json({error:'Neplatné meno'},400);await s.set(`name/${body.player}`,body.name.trim());return json({ok:true});}if(body.type==='hit'){if(![0,1].includes(body.player)||![1,-1].includes(body.delta))return json({error:'Neplatný zásah'},400);const current=await read();if(body.delta===-1&&current.scores[body.player]<=0)return json({error:'Skóre už je nula'},409);const event={player:body.player,delta:body.delta,at:new Date().toISOString()};await s.setJSON(`hit/${crypto.randomUUID()}`,event);return json({ok:true});}return json({error:'Neznáma akcia'},400);}catch(e){console.error(e);return json({error:'Nepodarilo sa spracovať požiadavku.'},500)}};
-export const config={path:'/api/counter'};
+
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    }
+  });
+
+const store = () =>
+  getStore({ name: 'fly-championship', consistency: 'strong' });
+
+async function read() {
+  const s = store();
+
+  // Načítanie všetkých zásahov s podporou stránkovania
+  const keys = [];
+  let cursor;
+
+  do {
+    const page = await s.list({
+      prefix: 'hit/',
+      cursor
+    });
+
+    keys.push(...page.blobs.map(b => b.key));
+    cursor = page.cursor;
+  } while (cursor);
+
+  const hits = (
+    await Promise.all(
+      keys.map(key =>
+        s.get(key, { type: 'json' }).catch(() => null)
+      )
+    )
+  ).filter(Boolean);
+
+  const names = await Promise.all(
+    [0, 1].map(async i =>
+      (await s.get(`name/${i}`, { type: 'text' })) ||
+      `Hráč ${i + 1}`
+    )
+  );
+
+  const scores = [0, 0];
+
+  for (const h of hits) {
+    if (h.player === 0 || h.player === 1) {
+      scores[h.player] += h.delta;
+    }
+  }
+
+  const events = hits
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, 20)
+    .map(h => ({
+      ...h,
+      name: names[h.player]
+    }));
+
+  return { names, scores, events };
+}
+
+export default async (request) => {
+  try {
+    if (request.method === 'GET') {
+      return json(await read());
+    }
+
+    if (request.method !== 'POST') {
+      return json({ error: 'Nepodporovaná metóda' }, 405);
+    }
+
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'Neplatné JSON' }, 400);
+    }
+
+    const s = store();
+
+    if (body.type === 'name') {
+      if (
+        ![0, 1].includes(body.player) ||
+        typeof body.name !== 'string' ||
+        !body.name.trim() ||
+        body.name.length > 32
+      ) {
+        return json({ error: 'Neplatné meno' }, 400);
+      }
+
+      await s.set(`name/${body.player}`, body.name.trim());
+      return json({ ok: true });
+    }
+
+    if (body.type === 'hit') {
+      if (
+        ![0, 1].includes(body.player) ||
+        ![1, -1].includes(body.delta)
+      ) {
+        return json({ error: 'Neplatný zásah' }, 400);
+      }
+
+      const current = await read();
+
+      if (
+        body.delta === -1 &&
+        current.scores[body.player] <= 0
+      ) {
+        return json({ error: 'Skóre už je nula' }, 409);
+      }
+
+      const event = {
+        player: body.player,
+        delta: body.delta,
+        at: new Date().toISOString()
+      };
+
+      await s.setJSON(`hit/${crypto.randomUUID()}`, event);
+
+      return json({ ok: true });
+    }
+
+    return json({ error: 'Neznáma akcia' }, 400);
+
+  } catch (e) {
+    console.error(e);
+
+    return json({
+      error: 'Nepodarilo sa spracovať požiadavku.'
+    }, 500);
+  }
+};
+
+export const config = {
+  path: '/api/counter'
+};
